@@ -38,10 +38,6 @@ class Mat3:
         m = self.m
         x = m[0][0] * p.x + m[0][1] * p.y + m[0][2]
         y = m[1][0] * p.x + m[1][1] * p.y + m[1][2]
-        w = m[2][0] * p.x + m[2][1] * p.y + m[2][2]
-        # для аффинных матриц w == 1; деление — на случай проективных
-        if w != 1.0 and w != 0.0:
-            x, y = x / w, y / w
         return Point(x, y)
 
     def __repr__(self):
