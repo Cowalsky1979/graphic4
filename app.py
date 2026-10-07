@@ -38,6 +38,7 @@ HINTS = {
 }
 
 PICK_TOLERANCE = 6  # пикселей
+CHECK_TOLERANCE = 8  # пикселей: насколько близко к ребру считается «на ребре / на прямой»
 
 COLOR_BG = "white"
 COLOR_POLY = "#1f4e8c"
@@ -85,6 +86,7 @@ class App:
         self.status_var = tk.StringVar()
         self.coord_var = tk.StringVar()
         self.hint_var = tk.StringVar()
+        self.result_var = tk.StringVar()   # крупный результат последней проверки
         self.fields = {
             "dx": tk.StringVar(value="50"), "dy": tk.StringVar(value="0"),
             "angle": tk.StringVar(value="30"),
@@ -144,6 +146,8 @@ class App:
 
         ttk.Label(panel, textvariable=self.hint_var, foreground="#555",
                   justify=tk.LEFT, wraplength=240).pack(anchor=tk.W, pady=(6, 0))
+        ttk.Label(panel, textvariable=self.result_var, font=("Segoe UI", 12, "bold"),
+                  justify=tk.LEFT, wraplength=240).pack(anchor=tk.W, pady=(10, 0))
 
         status = ttk.Frame(self.root, padding=(8, 2))
         status.pack(side=tk.BOTTOM, fill=tk.X)
@@ -189,6 +193,7 @@ class App:
         if mode == MODE_INTERSECT and self.selected is not None and len(self.selected) == 2:
             self.inter_first = self.selected
         self.hint_var.set(HINTS[mode])
+        self.result_var.set("")
         self.set_status(self._mode_prompt())
         self.redraw()
 
@@ -199,10 +204,21 @@ class App:
                 return "Задайте первое ребро: ПКМ по ребру сцены или 2 клика ЛКМ"
             return "Первое ребро задано. ЛКМ — начало второго ребра"
         if mode == MODE_INSIDE:
-            return "Выбран: " + self.selected.kind if self.selected else "Выберите полигон ПКМ"
+            return self._selected_description() if self.selected else "Выберите полигон ПКМ"
         if mode == MODE_CLASSIFY:
             return "Выбрано ребро" if self.selected and len(self.selected) == 2 else "Выберите ребро ПКМ"
         return HINTS[mode].split("\n")[0]
+
+    def _selected_description(self) -> str:
+        """«Выбран: полигон (4 вершин), выпуклый» — тип виден сразу после выбора."""
+        poly = self.selected
+        text = "Выбран: " + poly.kind
+        if len(poly) >= 3:
+            try:
+                text += ", выпуклый" if ga.is_convex(poly) else ", невыпуклый"
+            except NotImplementedError:
+                pass
+        return text
 
     # --------------------------------------------------------- события мыши
 
@@ -449,7 +465,8 @@ class App:
             return
         try:
             convex = ga.is_convex(poly)
-            result = ga.point_in_convex_polygon(p, poly) if convex else ga.point_in_polygon(p, poly)
+            result = (ga.point_in_convex_polygon(p, poly, CHECK_TOLERANCE) if convex
+                      else ga.point_in_polygon(p, poly, CHECK_TOLERANCE))
         except NotImplementedError:
             self.set_status(NOT_IMPLEMENTED.format("geom_algos"))
             return
@@ -461,6 +478,7 @@ class App:
         self.markers.append((p, color))
         kind = "Выпуклый" if convex else "Невыпуклый"
         self.set_status(f"{kind} полигон: точка ({p.x:g}, {p.y:g}) {text}")
+        self.result_var.set(f"{kind} полигон\nточка {text}")
 
     def check_classify(self, p: Point):
         poly = self.selected
@@ -469,7 +487,7 @@ class App:
             return
         a, b = poly.vertices
         try:
-            result = ga.classify_point(p, a, b)
+            result = ga.classify_point(p, a, b, CHECK_TOLERANCE)
         except NotImplementedError:
             self.set_status(NOT_IMPLEMENTED.format("classify_point"))
             return
@@ -480,6 +498,7 @@ class App:
         }.get(result, (str(result), "gray"))
         self.markers.append((p, color))
         self.set_status(f"Точка ({p.x:g}, {p.y:g}) {text} от ребра")
+        self.result_var.set(f"Точка {text}\nот ребра")
 
     # ----------------------------------------------------------- отрисовка
 
@@ -495,6 +514,15 @@ class App:
         self.draw_pivot()
         for p, color in self.markers:
             self.draw_dot(p, 4, color, outline="black")
+        self.draw_check_zone()
+
+    def draw_check_zone(self):
+        """В режимах проверок рисуем вокруг курсора круг допуска: всё, что внутри него,
+        считается «на ребре / на границе / на прямой»."""
+        if self.mode.get() in (MODE_INSIDE, MODE_CLASSIFY) and self.cursor is not None:
+            x, y = self.to_screen(self.cursor)
+            r = CHECK_TOLERANCE
+            self.canvas.create_oval(x - r, y - r, x + r, y + r, outline="#777", dash=(2, 2))
 
     def draw_dot(self, p: Point, r: float, fill: str, outline: str = ""):
         x, y = self.to_screen(p)
